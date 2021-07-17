@@ -1,0 +1,8 @@
+# Ignore build files
+*.so
+
+# Ignore tools
+.vs/
+.idea/
+.clangd/
+.cache/
