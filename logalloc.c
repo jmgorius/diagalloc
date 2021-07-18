@@ -190,7 +190,8 @@ static void call(struct call_info *info) {
     info->posix_memalign.result = (*actual_posix_memalign)(
         info->posix_memalign.memptr, info->posix_memalign.alignment,
         info->posix_memalign.size);
-    fprintf(stderr, "%d\n", info->posix_memalign.result);
+    fprintf(stderr, "%d [%p]\n", info->posix_memalign.result,
+            *info->posix_memalign.memptr);
     break;
   case ALIGNED_ALLOC_CALL:
     fprintf(stderr, C_GREY("%p") " aligned_alloc(%zu, %zu) -> ", return_addr,
