@@ -194,6 +194,7 @@ static void call(struct call_info *info) {
   case FREE_CALL:
     fprintf(stderr, C_GREY("%p") " free(%p)\n", info->return_addr,
             info->free.ptr);
+    (*actual_free)(info->free.ptr);
     break;
   case REALLOC_CALL:
     fprintf(stderr, C_GREY("%p") " realloc(%p, %zu) -> ", info->return_addr,
