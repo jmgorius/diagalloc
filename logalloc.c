@@ -1,6 +1,7 @@
 #define _GNU_SOURCE // For RTLD_NEXT
 #include <dlfcn.h>
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,34 +12,17 @@
 // malloc if the latter uses functions that call malloc internally
 static __thread int no_hook = 0;
 
-static void *(*actual_malloc)(size_t size);
-static void *(*actual_calloc)(size_t nmemb, size_t size);
-static void (*actual_free)(void *ptr);
-static void *(*actual_realloc)(void *ptr, size_t size);
-static void *(*actual_memalign)(size_t alignment, size_t size);
-static void *(*actual_pvalloc)(size_t size);
-static int (*actual_posix_memalign)(void **memptr, size_t alignment,
-                                    size_t size);
-static void *(*actual_aligned_alloc)(size_t alignment, size_t size);
-static void *(*actual_valloc)(size_t size);
-
-static void *(*tmp_malloc)(size_t size);
-static void *(*tmp_calloc)(size_t nmemb, size_t size);
-static void (*tmp_free)(void *ptr);
-static void *(*tmp_realloc)(void *ptr, size_t size);
-static void *(*tmp_memalign)(size_t alignment, size_t size);
-static void *(*tmp_pvalloc)(size_t size);
-static int (*tmp_posix_memalign)(void **memptr, size_t alignment, size_t size);
-static void *(*tmp_aligned_alloc)(size_t alignment, size_t size);
-static void *(*tmp_valloc)(size_t size);
-
 // We need to provide an initial malloc implementation as in some cases (e.g.,
-// when linked with pthread) the program may allocate memory in dlsym
+// when linked with pthread) the program may allocate memory in initialization
+// code
 static void *init_malloc(size_t size) {
-  static char buffer[2048];
+#define INIT_MALLOC_BUFFER_SIZE (1 << 18)
+  static char buffer[INIT_MALLOC_BUFFER_SIZE];
   static unsigned pos = 0;
   void *result = buffer + pos;
   pos += size;
+  if (pos >= INIT_MALLOC_BUFFER_SIZE)
+    result = 0;
   return result;
 }
 
@@ -53,16 +37,55 @@ static void *init_calloc(size_t nmemb, size_t size) {
 
 static void init_free(__attribute__((__unused__)) void *ptr) {}
 
-__attribute__((__constructor__)) static void init(void) {
-  actual_calloc = init_calloc;
-  actual_malloc = init_malloc;
-  actual_free = init_free;
-  actual_realloc = 0;
-  actual_memalign = 0;
-  actual_pvalloc = 0;
-  actual_posix_memalign = 0;
-  actual_aligned_alloc = 0;
+static void *init_realloc(void *ptr, size_t size) {
+  if (!ptr)
+    return init_malloc(size);
 
+  if (size == 0) {
+    init_free(ptr);
+    return 0;
+  }
+
+  void *result = init_malloc(size);
+  // We can copy size bytes since we are inside the temporary malloc buffer and
+  // we own all memory there
+  memcpy(result, ptr, size);
+  init_free(ptr);
+  return result;
+}
+
+static int init_posix_memalign(void **memptr, size_t alignment, size_t size) {
+  void *result = 0;
+  do {
+    result = init_malloc(1);
+  } while (((uintptr_t)result & ~(alignment - 1)) != (uintptr_t)result);
+  init_malloc(size - 1);
+  *memptr = result;
+  return 0;
+}
+
+static void *(*actual_malloc)(size_t size) = init_malloc;
+static void *(*actual_calloc)(size_t nmemb, size_t size) = init_calloc;
+static void (*actual_free)(void *ptr) = init_free;
+static void *(*actual_realloc)(void *ptr, size_t size) = init_realloc;
+static void *(*actual_memalign)(size_t alignment, size_t size);
+static void *(*actual_pvalloc)(size_t size);
+static int (*actual_posix_memalign)(void **memptr, size_t alignment,
+                                    size_t size) = init_posix_memalign;
+static void *(*actual_aligned_alloc)(size_t alignment, size_t size);
+static void *(*actual_valloc)(size_t size);
+
+static void *(*tmp_malloc)(size_t size);
+static void *(*tmp_calloc)(size_t nmemb, size_t size);
+static void (*tmp_free)(void *ptr);
+static void *(*tmp_realloc)(void *ptr, size_t size);
+static void *(*tmp_memalign)(size_t alignment, size_t size);
+static void *(*tmp_pvalloc)(size_t size);
+static int (*tmp_posix_memalign)(void **memptr, size_t alignment, size_t size);
+static void *(*tmp_aligned_alloc)(size_t alignment, size_t size);
+static void *(*tmp_valloc)(size_t size);
+
+__attribute__((__constructor__)) static void init(void) {
 #define HOOK(fn)                                                               \
   if (!(tmp_##fn = dlsym(RTLD_NEXT, #fn))) {                                   \
     fprintf(stderr, "Failed to hook '" #fn "'\n");                             \
