@@ -3,6 +3,7 @@
 
 #include <inttypes.h>
 #include <stdalign.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,17 +18,22 @@ static __thread int no_hook = 0;
 // We need to provide an initial malloc implementation as in some cases (e.g.,
 // when linked with pthread) the program may allocate memory in initialization
 // code
-static void *init_malloc(size_t size) {
 #define INIT_MALLOC_BUFFER_SIZE (1 << 18)
-  static char buffer[INIT_MALLOC_BUFFER_SIZE];
+static char init_malloc_buffer[INIT_MALLOC_BUFFER_SIZE];
+static void *init_malloc(size_t size) {
   static unsigned pos = 0;
-  void *result = buffer + pos;
+  void *result = init_malloc_buffer + pos;
   pos += size;
   // Round up to satisfy alignment requirements
   pos = (pos + alignof(max_align_t)) - (pos % alignof(max_align_t));
   if (pos >= INIT_MALLOC_BUFFER_SIZE)
     result = 0;
   return result;
+}
+
+static bool is_init_memory(uintptr_t ptr) {
+  return (uintptr_t)init_malloc_buffer <= ptr &&
+         ptr <= (uintptr_t)init_malloc_buffer + INIT_MALLOC_BUFFER_SIZE;
 }
 
 static void *init_calloc(size_t nmemb, size_t size) {
@@ -264,6 +270,9 @@ void *calloc(size_t nmemb, size_t size) {
 }
 
 void free(void *ptr) {
+  if (is_init_memory((uintptr_t)ptr))
+    return;
+
   if (no_hook)
     return (*actual_free)(ptr);
 
@@ -273,6 +282,16 @@ void free(void *ptr) {
 }
 
 void *realloc(void *ptr, size_t size) {
+  if (is_init_memory((uintptr_t)ptr)) {
+    size_t size_to_copy = (uintptr_t)init_malloc_buffer +
+                          INIT_MALLOC_BUFFER_SIZE - (uintptr_t)ptr;
+    if (size < size_to_copy)
+      size_to_copy = size;
+    void *result = malloc(size);
+    memcpy(result, ptr, size_to_copy);
+    return result;
+  }
+
   if (no_hook)
     return (*actual_realloc)(ptr, size);
 
