@@ -15,11 +15,22 @@ static void *(*actual_malloc)(size_t size);
 static void *(*actual_calloc)(size_t nmemb, size_t size);
 static void (*actual_free)(void *ptr);
 static void *(*actual_realloc)(void *ptr, size_t size);
+static void *(*actual_memalign)(size_t alignment, size_t size);
+static void *(*actual_pvalloc)(size_t size);
+static int (*actual_posix_memalign)(void **memptr, size_t alignment,
+                                    size_t size);
+static void *(*actual_aligned_alloc)(size_t alignment, size_t size);
+static void *(*actual_valloc)(size_t size);
 
 static void *(*tmp_malloc)(size_t size);
 static void *(*tmp_calloc)(size_t nmemb, size_t size);
 static void (*tmp_free)(void *ptr);
 static void *(*tmp_realloc)(void *ptr, size_t size);
+static void *(*tmp_memalign)(size_t alignment, size_t size);
+static void *(*tmp_pvalloc)(size_t size);
+static int (*tmp_posix_memalign)(void **memptr, size_t alignment, size_t size);
+static void *(*tmp_aligned_alloc)(size_t alignment, size_t size);
+static void *(*tmp_valloc)(size_t size);
 
 // We need to provide an initial malloc implementation as in some cases (e.g.,
 // when linked with pthread) the program may allocate memory in dlsym
@@ -47,6 +58,10 @@ __attribute__((__constructor__)) static void init(void) {
   actual_malloc = init_malloc;
   actual_free = init_free;
   actual_realloc = 0;
+  actual_memalign = 0;
+  actual_pvalloc = 0;
+  actual_posix_memalign = 0;
+  actual_aligned_alloc = 0;
 
 #define HOOK(fn)                                                               \
   if (!(tmp_##fn = dlsym(RTLD_NEXT, #fn))) {                                   \
@@ -59,6 +74,11 @@ __attribute__((__constructor__)) static void init(void) {
   HOOK(calloc);
   HOOK(free);
   HOOK(realloc);
+  HOOK(memalign);
+  HOOK(pvalloc);
+  HOOK(posix_memalign);
+  HOOK(aligned_alloc);
+  HOOK(valloc);
 
 #undef HOOK
 }
@@ -69,6 +89,11 @@ struct call_info {
     CALLOC_CALL,
     FREE_CALL,
     REALLOC_CALL,
+    MEMALIGN_CALL,
+    PVALLOC_CALL,
+    POSIX_MEMALIGN_CALL,
+    ALIGNED_ALLOC_CALL,
+    VALLOC_CALL,
   } type;
   union {
     struct {
@@ -88,6 +113,30 @@ struct call_info {
       size_t size;
       void *result;
     } realloc;
+    struct {
+      size_t alignment;
+      size_t size;
+      void *result;
+    } memalign;
+    struct {
+      size_t size;
+      void *result;
+    } pvalloc;
+    struct {
+      void **memptr;
+      size_t alignment;
+      size_t size;
+      int result;
+    } posix_memalign;
+    struct {
+      size_t alignment;
+      size_t size;
+      void *result;
+    } aligned_alloc;
+    struct {
+      size_t size;
+      void *result;
+    } valloc;
   };
 };
 
@@ -120,6 +169,41 @@ static void call(struct call_info *info) {
     info->realloc.result =
         (*actual_realloc)(info->realloc.ptr, info->realloc.size);
     fprintf(stderr, "%p\n", info->realloc.result);
+    break;
+  case MEMALIGN_CALL:
+    fprintf(stderr, C_GREY("%p") " memalign(%zu, %zu) -> ", return_addr,
+            info->memalign.alignment, info->memalign.alignment);
+    info->memalign.result =
+        (*actual_memalign)(info->memalign.alignment, info->memalign.size);
+    fprintf(stderr, "%p\n", info->memalign.result);
+    break;
+  case PVALLOC_CALL:
+    fprintf(stderr, C_GREY("%p") " pvalloc(%zu) -> ", return_addr,
+            info->pvalloc.size);
+    info->pvalloc.result = (*actual_pvalloc)(info->pvalloc.size);
+    fprintf(stderr, "%p\n", info->pvalloc.result);
+    break;
+  case POSIX_MEMALIGN_CALL:
+    fprintf(stderr, C_GREY("%p") " posix_memalign(%p, %zu, %zu) -> ",
+            return_addr, info->posix_memalign.memptr,
+            info->posix_memalign.alignment, info->posix_memalign.size);
+    info->posix_memalign.result = (*actual_posix_memalign)(
+        info->posix_memalign.memptr, info->posix_memalign.alignment,
+        info->posix_memalign.size);
+    fprintf(stderr, "%d\n", info->posix_memalign.result);
+    break;
+  case ALIGNED_ALLOC_CALL:
+    fprintf(stderr, C_GREY("%p") " aligned_alloc(%zu, %zu) -> ", return_addr,
+            info->aligned_alloc.alignment, info->aligned_alloc.size);
+    info->aligned_alloc.result = (*actual_aligned_alloc)(
+        info->aligned_alloc.alignment, info->aligned_alloc.size);
+    fprintf(stderr, "%p\n", info->aligned_alloc.result);
+    break;
+  case VALLOC_CALL:
+    fprintf(stderr, C_GREY("%p") " valloc(%zu) -> ", return_addr,
+            info->valloc.size);
+    info->valloc.result = (*actual_valloc)(info->valloc.size);
+    fprintf(stderr, "%p\n", info->valloc.result);
     break;
   }
 
@@ -161,4 +245,56 @@ void *realloc(void *ptr, size_t size) {
       .type = REALLOC_CALL, .realloc.ptr = ptr, .realloc.size = size};
   call(&info);
   return info.realloc.result;
+}
+
+void *memalign(size_t alignment, size_t size) {
+  if (no_hook)
+    return (*actual_memalign)(alignment, size);
+
+  struct call_info info = {.type = MEMALIGN_CALL,
+                           .memalign.alignment = alignment,
+                           .memalign.size = size};
+  call(&info);
+  return info.memalign.result;
+}
+
+void *pvalloc(size_t size) {
+  if (no_hook)
+    return (*actual_pvalloc)(size);
+
+  struct call_info info = {.type = PVALLOC_CALL, .pvalloc.size = size};
+  call(&info);
+  return info.pvalloc.result;
+}
+
+int posix_memalign(void **memptr, size_t alignment, size_t size) {
+  if (no_hook)
+    return (*actual_posix_memalign)(memptr, alignment, size);
+
+  struct call_info info = {.type = POSIX_MEMALIGN_CALL,
+                           .posix_memalign.memptr = memptr,
+                           .posix_memalign.alignment = alignment,
+                           .posix_memalign.size = size};
+  call(&info);
+  return info.posix_memalign.result;
+}
+
+void *aligned_alloc(size_t alignment, size_t size) {
+  if (no_hook)
+    return (*actual_aligned_alloc)(alignment, size);
+
+  struct call_info info = {.type = ALIGNED_ALLOC_CALL,
+                           .aligned_alloc.alignment = alignment,
+                           .aligned_alloc.size = size};
+  call(&info);
+  return info.aligned_alloc.result;
+}
+
+void *valloc(size_t size) {
+  if (no_hook)
+    return (*actual_valloc)(size);
+
+  struct call_info info = {.type = VALLOC_CALL, .valloc.size = size};
+  call(&info);
+  return info.valloc.result;
 }
