@@ -18,7 +18,7 @@ static __thread int no_hook = 0;
 // We need to provide an initial malloc implementation as in some cases (e.g.,
 // when linked with pthread) the program may allocate memory in initialization
 // code
-#define INIT_MALLOC_BUFFER_SIZE (1 << 18)
+#define INIT_MALLOC_BUFFER_SIZE (1 << 20)
 static char init_malloc_buffer[INIT_MALLOC_BUFFER_SIZE];
 static void *init_malloc(size_t size) {
   static unsigned pos = 0;
