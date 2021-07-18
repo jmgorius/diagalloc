@@ -8,10 +8,13 @@ LDLIBS = -ldl
 
 .PHONY: all clean
 
-all: logalloc.so
+all: failalloc.so logalloc.so
 
 clean:
-	rm -f logalloc.so
+	rm -f failalloc.so logalloc.so
+
+failalloc.so: failalloc.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 logalloc.so: logalloc.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
