@@ -2,6 +2,8 @@
 #include <dlfcn.h>
 
 #include <inttypes.h>
+#include <stdalign.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,6 +23,8 @@ static void *init_malloc(size_t size) {
   static unsigned pos = 0;
   void *result = buffer + pos;
   pos += size;
+  // Round up to satisfy alignment requirements
+  pos = (pos + alignof(max_align_t)) - (pos % alignof(max_align_t));
   if (pos >= INIT_MALLOC_BUFFER_SIZE)
     result = 0;
   return result;
